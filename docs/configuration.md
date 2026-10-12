@@ -39,8 +39,9 @@ plugins:
 
 ## All settings
 
-These keys go under `claude-seat-pacer:`. Every key is optional; `landing-target`, `affinity.ttl`, `override-threshold`
-and `poll-interval` are the ones worth tuning. The host applies changes live.
+These keys go under `claude-seat-pacer:`. Every key is optional; `landing-target`,
+`affinity.ttl`, `override-threshold`, `prefer-uncapped` and `poll-interval` are
+the ones worth tuning. The host applies changes live.
 Changing `affinity.ttl` or `max-sessions` clears the bindings, costing each
 open conversation one prompt-cache miss.
 
@@ -61,6 +62,7 @@ open conversation one prompt-cache miss.
         weekly-weight: 1.0      # weight of the all-models weekly window
         scoped-weight: 0.5      # weight of a model-family weekly window
         session-weight: 0       # weight of the 5-hour window; it is a rate limit, not a budget
+        prefer-uncapped: false  # seats with no all-models weekly cap go first; see How it picks
         hysteresis-margin: 0.05 # cost gap a challenger must beat to move a binding when override-threshold is off
       quota:
         poll-interval: 2m       # usage-endpoint read cadence; below 30s falls back to the default

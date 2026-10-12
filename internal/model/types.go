@@ -344,8 +344,9 @@ type Score struct {
 	// Cost is how much a request on this credential costs the pool: the
 	// weighted sum of how far each window runs over its target. Running over
 	// target counts against the credential and running under counts for it,
-	// so the lowest cost wins. Every term is one window's; nothing else
-	// enters it.
+	// so the lowest cost wins. Every term is one window's; the only other
+	// part is the lead PaceConfig.PreferUncapped takes off a credential with
+	// no all-models weekly window.
 	Cost     float64       `json:"cost"`
 	Windows  []WindowScore `json:"windows"`
 	Eligible bool          `json:"eligible"`

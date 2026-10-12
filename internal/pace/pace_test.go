@@ -3,6 +3,7 @@ package pace
 import (
 	"math"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -1194,5 +1195,103 @@ func TestStalenessGatesRunBeforeScoring(t *testing.T) {
 	}
 	if s := scoreOf(t, ranked, "fresh"); !s.Eligible {
 		t.Errorf("fresh candidate = %+v, want it scored", s)
+	}
+}
+
+// A pool of two seats with an all-models weekly window and two without one,
+// as Team seats report: a 5-hour window and a Fable weekly window. With
+// PreferUncapped on, the uncapped seats go first on every model, the one with
+// more 5-hour room ahead, and a capped seat far behind its plan waits behind
+// both. Off, an uncapped seat costs only its other windows' terms and sits
+// between the capped seats.
+func TestPreferUncappedRanksSeatsWithNoWeeklyCapFirst(t *testing.T) {
+	now := testNow
+	pool := snapshots(
+		seat("capped-behind", now,
+			paced(model.WindowSession, "", now, 0.5, 0.1),
+			weekly(now, 0.9, 0.1),
+			paced(model.WindowWeeklyScoped, model.FamilyFable, now, 0.5, 0.2),
+		),
+		seat("capped-ahead", now,
+			paced(model.WindowSession, "", now, 0.5, 0.1),
+			weekly(now, 0.2, 0.8),
+			paced(model.WindowWeeklyScoped, model.FamilyFable, now, 0.5, 0.2),
+		),
+		seat("uncapped-busy", now,
+			paced(model.WindowSession, "", now, 0.5, 0.8),
+			paced(model.WindowWeeklyScoped, model.FamilyFable, now, 0.5, 0.2),
+		),
+		seat("uncapped-idle", now,
+			paced(model.WindowSession, "", now, 0.5, 0.1),
+			paced(model.WindowWeeklyScoped, model.FamilyFable, now, 0.5, 0.2),
+		),
+	)
+	ids := []string{"capped-ahead", "capped-behind", "uncapped-busy", "uncapped-idle"}
+
+	cases := []struct {
+		name    string
+		prefer  bool
+		modelID string
+		want    []string
+	}{
+		{"off, opus", false, opus, []string{"capped-behind", "uncapped-busy", "uncapped-idle", "capped-ahead"}},
+		{"on, opus", true, opus, []string{"uncapped-idle", "uncapped-busy", "capped-behind", "capped-ahead"}},
+		{"on, fable", true, fable, []string{"uncapped-idle", "uncapped-busy", "capped-behind", "capped-ahead"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := model.Defaults().Pace
+			cfg.PreferUncapped = tc.prefer
+			got := rankedIDs(Rank(cfg, pool, ids, tc.modelID, now))
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("ranked %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The lead outweighs any spread of slack the configured weights allow: the
+// emptiest-looking capped seat still ranks behind the fullest eligible
+// uncapped one, at zero weights and at large ones.
+func TestPreferUncappedLeadHoldsAtAnyWeights(t *testing.T) {
+	now := testNow
+	pool := snapshots(
+		seat("capped", now,
+			paced(model.WindowSession, "", now, 0.99, 0),
+			weekly(now, 0.99, 0),
+			paced(model.WindowWeeklyScoped, model.FamilyOpus, now, 0.99, 0),
+		),
+		seat("uncapped", now,
+			paced(model.WindowSession, "", now, 0, 0.999),
+			paced(model.WindowWeeklyScoped, model.FamilyOpus, now, 0, 0.999),
+		),
+	)
+	for _, w := range []float64{0, 0.5, 1, 100} {
+		cfg := model.Defaults().Pace
+		cfg.PreferUncapped = true
+		cfg.WeeklyWeight, cfg.ScopedWeight, cfg.SessionWeight = w, w, w
+		best, ok := Best(Rank(cfg, pool, []string{"capped", "uncapped"}, opus, now))
+		if !ok || best.AuthID != "uncapped" {
+			t.Errorf("weights %v: best = %q (ok=%v), want uncapped", w, best.AuthID, ok)
+		}
+	}
+}
+
+// Preferring a seat never makes it eligible: a full 5-hour window still gates
+// an uncapped seat, and the capped seat takes the conversation.
+func TestPreferUncappedKeepsTheGates(t *testing.T) {
+	now := testNow
+	cfg := model.Defaults().Pace
+	cfg.PreferUncapped = true
+	pool := snapshots(
+		seat("capped", now, paced(model.WindowSession, "", now, 0.5, 0.1), weekly(now, 0.2, 0.8)),
+		seat("uncapped", now, paced(model.WindowSession, "", now, 0.5, 1.0)),
+	)
+	scores := Rank(cfg, pool, []string{"capped", "uncapped"}, opus, now)
+	if s := scoreOf(t, scores, "uncapped"); s.Eligible || s.Reason != model.ReasonSpent {
+		t.Fatalf("uncapped eligible=%v reason=%q, want a full session window to gate", s.Eligible, s.Reason)
+	}
+	if best, ok := Best(scores); !ok || best.AuthID != "capped" {
+		t.Fatalf("best = %q (ok=%v), want capped", best.AuthID, ok)
 	}
 }

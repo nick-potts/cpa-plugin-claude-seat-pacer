@@ -85,6 +85,10 @@ func sigmoid(k, elapsed float64) float64 {
 // contribute nothing, so the status UI renders the whole picture from one
 // value; a non-zero Weight marks a window that moved the score.
 //
+// Under PreferUncapped, a credential with no all-models weekly window paces
+// its 5-hour window at WeeklyWeight and carries uncappedLead off its cost, so
+// it ranks ahead of every credential with one.
+//
 // Snapshot age is not gated here; the caller applies QuotaConfig.MaxStaleness
 // and model.ReasonStale.
 func ScoreAuth(cfg model.PaceConfig, snap model.AuthSnapshot, modelID string, now time.Time) model.Score {
@@ -101,6 +105,7 @@ func ScoreAuth(cfg model.PaceConfig, snap model.AuthSnapshot, modelID string, no
 	}
 
 	family := model.FamilyOf(modelID)
+	uncapped := cfg.PreferUncapped && !hasWeekly(snap.Windows)
 	score.Windows = make([]model.WindowScore, 0, len(snap.Windows))
 
 	var (
@@ -127,7 +132,7 @@ func ScoreAuth(cfg model.PaceConfig, snap model.AuthSnapshot, modelID string, no
 			spent = spent || w.Utilization >= 1
 			unreadable = unreadable || math.IsNaN(w.Utilization) || math.IsInf(w.Utilization, 0)
 			if open(w) {
-				ws.Weight = weightOf(cfg, w)
+				ws.Weight = weightOf(cfg, w, uncapped)
 				// A window carrying no weight contributes no term. Skipping
 				// the product rather than adding a zero keeps an unreadable
 				// reading on such a window out of the total, where it would
@@ -138,6 +143,9 @@ func ScoreAuth(cfg model.PaceConfig, snap model.AuthSnapshot, modelID string, no
 			}
 		}
 		score.Windows = append(score.Windows, ws)
+	}
+	if uncapped {
+		score.Cost -= uncappedLead(cfg)
 	}
 
 	switch {
@@ -162,10 +170,34 @@ func open(w model.Window) bool {
 	return !w.ResetsAt.IsZero() && w.Duration > 0
 }
 
-// weightOf is the coefficient an open, bearing window contributes with.
-func weightOf(cfg model.PaceConfig, w model.Window) float64 {
+// hasWeekly reports whether a reading carries an all-models weekly window.
+func hasWeekly(windows []model.Window) bool {
+	for _, w := range windows {
+		if w.Kind == model.WindowWeekly {
+			return true
+		}
+	}
+	return false
+}
+
+// uncappedLead is the cost PreferUncapped takes off a credential with no
+// all-models weekly window. An eligible window's slack lies in (-1, 1], since
+// its target lies in 0..1 and its utilization in 0..1, so no credential's cost
+// is further from zero than the sum of the weights; a lead past twice that
+// sum orders every uncapped credential ahead of every capped one.
+func uncappedLead(cfg model.PaceConfig) float64 {
+	return 1 + 2*(cfg.WeeklyWeight+cfg.ScopedWeight+cfg.SessionWeight)
+}
+
+// weightOf is the coefficient an open, bearing window contributes with. An
+// uncapped credential's 5-hour window is its only all-models budget, so it
+// carries the weekly window's weight when that is the larger.
+func weightOf(cfg model.PaceConfig, w model.Window, uncapped bool) float64 {
 	switch w.Kind {
 	case model.WindowSession:
+		if uncapped {
+			return math.Max(cfg.SessionWeight, cfg.WeeklyWeight)
+		}
 		return cfg.SessionWeight
 	case model.WindowWeekly:
 		return cfg.WeeklyWeight

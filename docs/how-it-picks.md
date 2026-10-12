@@ -23,6 +23,15 @@ before its reset. Set `landing-target: 1.0` to plan each seat to finish at its
 reset instead. For an even spread, disable the plugin; the host's own strategy,
 round-robin by default, takes over.
 
+Some seats have no all-models weekly window, only a 5-hour window and a
+model family's weekly window. With no weight on the 5-hour window, such a seat
+costs nothing on a model outside that family: it ranks behind every capped seat
+behind its plan, and ahead of every capped seat ahead of it. Set
+`prefer-uncapped: true` to rank every eligible seat with no all-models weekly
+window ahead of every seat with one, on every model. Among those seats the 5-hour
+window is weighed like a weekly window, so the one with most 5-hour room goes
+first. A capped seat takes new conversations only once no uncapped seat can.
+
 A seat is ineligible when:
 
 - Anthropic has refused a request on a window covering the requested model's

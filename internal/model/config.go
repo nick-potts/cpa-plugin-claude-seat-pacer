@@ -95,6 +95,14 @@ type PaceConfig struct {
 	// requested model falls in that family. Both weekly windows are paced
 	// against the same curve and differ only in weight.
 	ScopedWeight float64 `yaml:"scoped-weight" json:"scoped_weight"`
+	// PreferUncapped ranks every credential with no all-models weekly window
+	// ahead of every credential with one. Such a credential has no weekly
+	// budget to lose, only a 5-hour window, so among them that window is paced
+	// at WeeklyWeight and the one furthest behind it goes first. Off, a
+	// credential with no all-models weekly window costs only its other
+	// windows' terms, which places it between capped credentials behind their
+	// curve and those ahead of it.
+	PreferUncapped bool `yaml:"prefer-uncapped" json:"prefer_uncapped"`
 
 	// HysteresisMargin is the score gap a challenger must beat before an
 	// established binding moves. Zero makes routing flap at window edges.
